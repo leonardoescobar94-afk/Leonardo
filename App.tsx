@@ -10,6 +10,7 @@ import {
 } from './types';
 import { DEFAULT_REFERENCES } from './constants';
 import { runFullAnalysis } from './utils/analysis';
+import { getClinicalSummary } from './services/geminiService';
 
 const App: React.FC = () => {
   const [patient, setPatient] = useState<PatientData>({ 
@@ -22,6 +23,10 @@ const App: React.FC = () => {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [activeAccordion, setActiveAccordion] = useState<string | null>(null);
+  
+  // Estados para la IA
+  const [aiSummary, setAiSummary] = useState<string>('');
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   useEffect(() => {
     const initialReadings: NerveReading[] = DEFAULT_REFERENCES.map(ref => ({
@@ -34,6 +39,14 @@ const App: React.FC = () => {
     }));
     setReadings(initialReadings);
   }, []);
+
+  // Limpiar resultados si cambian los datos para evitar inconsistencias
+  useEffect(() => {
+    if (result) {
+      setResult(null);
+      setAiSummary('');
+    }
+  }, [patient, readings]);
 
   const handlePatientChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -62,11 +75,20 @@ const App: React.FC = () => {
 
   const handleCalculate = () => {
     setIsLoading(true);
+    setAiSummary(''); // Limpiar resumen previo
     setTimeout(() => {
       const analysis = runFullAnalysis(readings, patient);
       setResult(analysis);
       setIsLoading(false);
     }, 500);
+  };
+
+  const handleGenerateAiSummary = async () => {
+    if (!result) return;
+    setIsAiLoading(true);
+    const summary = await getClinicalSummary(patient, readings, result);
+    setAiSummary(summary);
+    setIsAiLoading(false);
   };
 
   const handleDownloadReport = () => {
@@ -103,6 +125,10 @@ ${result.score4.details.map(d => `  - ${d.nerve}: ${d.value} (P${(d.percentile *
 CLASIFICACIÓN FINAL DE SEVERIDAD:
 ---------------------------------
 ${result.severityClass}
+
+INTERPRETACIÓN CLÍNICA (IA - GEMINI):
+-------------------------------------
+${aiSummary || 'No generada en este reporte.'}
 
 ==========================================================
 Reporte generado por Polineuropathy-Assistant PM&R Specialist Platform.
@@ -252,6 +278,7 @@ Uso exclusivamente profesional y académico.
                 <div className="absolute top-0 right-0 w-48 h-48 bg-blue-600/10 rounded-full -mr-12 -mt-12 blur-3xl print:hidden"></div>
               </div>
 
+              {/* Seccion Scores */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm print:p-4">
                   <div className="flex justify-between items-center mb-6">
@@ -292,6 +319,49 @@ Uso exclusivamente profesional y académico.
                     ))}
                   </div>
                 </div>
+              </div>
+
+              {/* Sección IA */}
+              <div className="bg-gradient-to-br from-indigo-50 to-blue-50 p-6 rounded-2xl border border-blue-100 shadow-sm print:bg-white print:border-slate-200">
+                 <div className="flex justify-between items-start mb-4">
+                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                       <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                       Asistente Inteligente PM&R
+                    </h3>
+                 </div>
+                 
+                 {aiSummary ? (
+                   <div className="prose prose-sm max-w-none">
+                     <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{aiSummary}</div>
+                     <button 
+                        onClick={() => setAiSummary('')}
+                        className="mt-4 text-[10px] font-bold text-slate-400 hover:text-slate-600 uppercase print:hidden"
+                     >
+                        Regenerar o Limpiar
+                     </button>
+                   </div>
+                 ) : (
+                   <div className="text-center py-6 print:hidden">
+                     <p className="text-xs text-slate-500 mb-4">Genere un resumen clínico basado en los hallazgos electrofisiológicos usando IA.</p>
+                     <button 
+                       onClick={handleGenerateAiSummary}
+                       disabled={isAiLoading}
+                       className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 mx-auto disabled:opacity-50"
+                     >
+                       {isAiLoading ? (
+                         <>
+                           <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                           Analizando...
+                         </>
+                       ) : (
+                         <>
+                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                           Generar Concepto Clínico
+                         </>
+                       )}
+                     </button>
+                   </div>
+                 )}
               </div>
             </div>
           )}
