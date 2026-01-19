@@ -18,7 +18,7 @@ export const getClinicalSummary = async (
 
   const prompt = `
     Como experto en medicina física y rehabilitación, analiza los siguientes resultados de neuroconducción:
-    Paciente: Edad ${patient.age}, Altura ${patient.height}cm, Peso ${patient.weight}kg.
+    Paciente: Edad ${patient.age}, Altura ${patient.height}cm.
     Resultados del Estudio:
     ${readings.map(r => `- ${r.nerveName} (${r.type}): Latencia ${r.distalLatency}ms, Amplitud ${r.amplitude}, Velocidad ${r.velocity}m/s`).join('\n')}
     

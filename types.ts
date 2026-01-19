@@ -31,16 +31,7 @@ export interface NerveReading {
 export interface PatientData {
   age: number;
   height: number;
-  weight: number;
-  symptoms: NeuropathySymptom;
   name?: string;
-}
-
-export enum severityLevel {
-  N0 = "N0: Sin anomalías en las neuroconducciones",
-  N1 = "N1: Anomalía en score #2 sin signos de neuropatía",
-  N2 = "N2: Anomalía en score #2 y signos en pies o piernas",
-  N3 = "N3: Anomalía en score #2 y signos de afectación del muslo"
 }
 
 export interface ScoreDetail {
@@ -51,7 +42,18 @@ export interface ScoreDetail {
 }
 
 export interface AnalysisResult {
-  score2: { total: number; isAbnormal: boolean; details: ScoreDetail[] };
-  score4: { total: number; isAbnormal: boolean; details: ScoreDetail[] };
-  severityClass: severityLevel;
+  score2: { 
+    total: number; 
+    isAbnormal: boolean; 
+    details: ScoreDetail[];
+    interpretationBody: string;
+  };
+  score4: { 
+    total: number; 
+    isAbnormal: boolean; 
+    details: ScoreDetail[];
+    severityLabel: string;
+  };
+  severityClass: string;
+  diagnosisClass: string;
 }

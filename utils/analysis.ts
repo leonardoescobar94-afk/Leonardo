@@ -1,5 +1,6 @@
 
-import { NerveReading, PatientData, NeuropathySymptom, severityLevel, ScoreDetail, AnalysisResult, NerveType } from '../types';
+import { NerveReading, PatientData, ScoreDetail, AnalysisResult, NerveType } from '../types';
+import { TEXTS } from '../constants';
 
 /**
  * Función de Distribución Acumulada (CDF) para la distribución normal estándar.
@@ -13,16 +14,50 @@ const normCDF = (x: number): number => {
 
 const getZScore = (value: number, mean: number, sd: number) => (value - mean) / sd;
 
-const calculatePoints = (percentile: number, isLatency: boolean = false): number => {
-  if (isLatency) {
+const calculatePoints = (
+  percentile: number, 
+  nerveName: string, 
+  paramType: 'vel' | 'lat' | 'amp', 
+  age: number
+): number => {
+  // Latency (Sural) - Score 2
+  if (paramType === 'lat') {
     if (percentile > 0.99) return 2;
     if (percentile > 0.95) return 1;
     return 0;
-  } else {
-    if (percentile < 0.01) return 2;
-    if (percentile < 0.05) return 1;
-    return 0;
   }
+
+  // Amplitude - Score 4 Exceptions
+  if (paramType === 'amp') {
+    // Sural Amplitude Exception
+    if (nerveName.includes('Sural')) {
+      if (percentile < 0.0446) return 2; // < 4.46th percentile
+      if (percentile < 0.0968) return 1; // < 9.68th percentile
+      return 0;
+    }
+
+    // Tibial Amplitude Exception (Age 60-79)
+    if (nerveName.includes('Tibial') && age >= 60 && age <= 79) {
+      if (percentile < 0.02) return 2; // < 2nd percentile
+      if (percentile < 0.05) return 1; // 2nd to 5th percentile
+      return 0;
+    }
+
+    // Fibular (Peroneal) Amplitude Exception (Age 40-79)
+    if (nerveName.includes('Fibular') && age >= 40 && age <= 79) {
+      if (percentile < 0.021) return 2; // < 2.1th percentile
+      if (percentile < 0.05) return 1; // 2.1th to 5th percentile
+      return 0;
+    }
+  }
+
+  // Standard Rule for Velocity and other Amplitudes
+  // < 1st percentile -> 2 points
+  // < 5th percentile -> 1 point
+  // 5th to 95th -> 0 points
+  if (percentile < 0.01) return 2;
+  if (percentile < 0.05) return 1;
+  return 0;
 };
 
 const parseInputValue = (val: string | number): number | 'NR' => {
@@ -70,7 +105,7 @@ const getFibularStats = (patient: PatientData) => {
   return { amp, vel };
 };
 
-export const runFullAnalysis = (readings: NerveReading[], patient: PatientData): AnalysisResult => {
+export const runFullAnalysis = (readings: NerveReading[], patient: PatientData, lang: 'es' | 'en' = 'es'): AnalysisResult => {
   const score2Details: ScoreDetail[] = [];
   const score4Details: ScoreDetail[] = [];
 
@@ -92,14 +127,15 @@ export const runFullAnalysis = (readings: NerveReading[], patient: PatientData):
     const aVal = parseInputValue(r.amplitude);
     const pVal = r.peakLatency ? parseInputValue(r.peakLatency) : 0;
 
-    // Score #2
+    // Score #2 (Diagnosis) - Velocities + Sural Latency
     if (r.type === NerveType.MOTOR) {
       if (vVal === 'NR') {
         score2Details.push({ nerve: r.nerveName, value: 'NR', percentile: 0.001, points: 2 });
       } else if (vVal > 0) {
         const z = getZScore(vVal, stats.vel.mean, stats.vel.sd);
         const p = normCDF(z);
-        score2Details.push({ nerve: r.nerveName, value: vVal, percentile: p, points: calculatePoints(p) });
+        const points = calculatePoints(p, r.nerveName, 'vel', patient.age);
+        score2Details.push({ nerve: r.nerveName, value: vVal, percentile: p, points });
       }
     } else if (r.nerveName.includes('Sural')) {
       if (pVal === 'NR') {
@@ -107,36 +143,46 @@ export const runFullAnalysis = (readings: NerveReading[], patient: PatientData):
       } else if (pVal > 0) {
         const z = getZScore(pVal, stats.lat.mean, stats.lat.sd);
         const p = normCDF(z);
-        score2Details.push({ nerve: 'Sural (Latencia)', value: pVal, percentile: p, points: calculatePoints(p, true) });
+        const points = calculatePoints(p, r.nerveName, 'lat', patient.age);
+        score2Details.push({ nerve: 'Sural (Latencia)', value: pVal, percentile: p, points });
       }
     }
 
-    // Score #4
+    // Score #4 (Severity) - Amplitudes
     if (aVal === 'NR') {
       score4Details.push({ nerve: r.nerveName, value: 'NR', percentile: 0.001, points: 2 });
     } else if (aVal > 0) {
       const z = getZScore(aVal, stats.amp.mean, stats.amp.sd);
       const p = normCDF(z);
-      score4Details.push({ nerve: r.nerveName, value: aVal, percentile: p, points: calculatePoints(p) });
+      const points = calculatePoints(p, r.nerveName, 'amp', patient.age);
+      score4Details.push({ nerve: r.nerveName, value: aVal, percentile: p, points });
     }
   });
 
   const s2Total = score2Details.reduce((acc, curr) => acc + curr.points, 0);
   const s4Total = score4Details.reduce((acc, curr) => acc + curr.points, 0);
   
+  // Score #2 Diagnosis Rule
   const s2Abnormal = s2Total >= 2;
+  const diagnosisClass = s2Abnormal ? TEXTS[lang].abnormal : TEXTS[lang].normal;
+  const interpretationBody = s2Abnormal ? TEXTS[lang].s2AbnormalBody : TEXTS[lang].s2NormalBody;
+  
+  // Score #4 Severity Rule
+  // 7-8: Severa, 4-6: Moderada, 2-3: Leve, <2: Normal
   const s4Abnormal = s4Total >= 2;
-
-  let severity: severityLevel = severityLevel.N0;
-  if (s2Abnormal) {
-    if (patient.symptoms === NeuropathySymptom.NONE) severity = severityLevel.N1;
-    else if (patient.symptoms === NeuropathySymptom.FEET_LEGS) severity = severityLevel.N2;
-    else if (patient.symptoms === NeuropathySymptom.THIGH) severity = severityLevel.N3;
-  }
+  
+  let severityLabel = TEXTS[lang].normal; 
+  if (s4Total >= 7) severityLabel = TEXTS[lang].severe;
+  else if (s4Total >= 4) severityLabel = TEXTS[lang].moderate;
+  else if (s4Total >= 2) severityLabel = TEXTS[lang].mild;
+  
+  // Composite string for display
+  const finalSeverityClass = `${diagnosisClass} / ${severityLabel}`;
 
   return {
-    score2: { total: s2Total, isAbnormal: s2Abnormal, details: score2Details },
-    score4: { total: s4Total, isAbnormal: s4Abnormal, details: score4Details },
-    severityClass: severity
+    score2: { total: s2Total, isAbnormal: s2Abnormal, details: score2Details, interpretationBody },
+    score4: { total: s4Total, isAbnormal: s4Abnormal, details: score4Details, severityLabel },
+    severityClass: finalSeverityClass,
+    diagnosisClass: diagnosisClass
   };
 };
